@@ -15,6 +15,7 @@ type SyntaxNode =
     | Product of SyntaxNode * SyntaxNode
     | Sum of SyntaxNode * SyntaxNode
     | Error of Diagnostic
+    | ErrorPair of SyntaxNode * Diagnostic
 
 /// Binary Node Constructor. Converts the head::tail list from a binary parser
 /// into a `SyntaxNode` by recursively applying `cons`. This has the property of
@@ -32,6 +33,8 @@ let rec getDiagnostics = function
     | Sum (left, right) ->
         getDiagnostics left @ getDiagnostics right
     | Error diag -> [diag]
+    | ErrorPair (node, diag) ->
+        getDiagnostics node @ [diag]
 
 // ~~~~~~~~~~~~~ Error Handling Constructs ~~~~~~~~~~~~~~~~~~
 //
@@ -66,8 +69,18 @@ let error (stream: CharStream<_>) =
 
 let expr, exprRef = createParserForwardedToRef()
 
+let customBetween popen pclose p =
+    parse {
+        let! _ = popen
+        let! (mid : SyntaxNode) = p
+        let! (right : Result<_, _>) = pclose
+        match right with
+            | Result.Error diag -> return binNode ErrorPair (mid, [diag])
+            | Result.Ok _ -> return mid
+    }
+
 let value =
-    (pint64  |>> Value ) <|> between (pchar '(') (expect (pchar ')') "missing closing ')'") (expectSyn expr "expected expression after opening (")
+    (pint64  |>> Value ) <|> customBetween (pchar '(') (expect (pchar ')') "missing closing ')'") (expectSyn expr "expected expression after opening (")
 
 let product =
     let op = pchar '*' <|> pchar '/'
