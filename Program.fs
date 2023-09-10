@@ -49,7 +49,7 @@ let expect (p: Parser<'a, _>) err =
 /// A variant of `expet` that resolves parser failures with the `Error` syntax
 /// node rather than returning an `option`al value.
 let expectSyn (p: Parser<SyntaxNode, _>) err =
-    expect p err |>> Result.defaultWith (fun diag -> Error diag)
+    expect p err |>> Result.defaultWith Error
 
 /// Error syncrhonisation. used to parse any characters and emit them as
 /// diagnostics. This is `<|>`ed into the standard combinator chain right at the
