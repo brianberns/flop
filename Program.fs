@@ -87,11 +87,16 @@ let parser = many (expr <|> error) .>> eof
 let private parseExpr input =
     match runParserOnString parser () "test" input with
     | ParserResult.Failure(_) as f -> failwithf "Parser failed! %A" f
-    | ParserResult.Success(r, _, _) -> (r, List.map getDiagnostics r)
+    | ParserResult.Success(r, _, _) -> r
 
 let private test input =
-    parseExpr input
-    |> printfn "'%s' ~> %A" input
+    let r = parseExpr input
+    let diags = List.collect getDiagnostics r
+    printfn ""
+    if diags.IsEmpty then
+        printfn "'%s' ~> %A" input r
+    else
+        printfn "'%s' ~> %A" input diags
 
 [<EntryPoint>]
 let main argv =
