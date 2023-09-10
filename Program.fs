@@ -2,10 +2,7 @@
 //
 // This is a small investigation into error handling and recovery in FParsec
 // based on the ideas discussed by @ebkalderon in [Error recovery with parser
-// combinators (using nom)](https://www.eyalkalderon.com/nom-error-recovery/).
-//
-// For a discussion behind this code check out the blog post [Error Recovery in
-// FParsec](https://willspeak.me/2020/09/10/error-recovery-in-fparsec.html).
+// combinators (using nom)](https://www.eyalkalderon.com/nom-error-recovery/)
 
 open FParsec
 
@@ -17,7 +14,7 @@ type SyntaxNode =
     | Value of int64
     | Product of SyntaxNode * SyntaxNode
     | Sum of SyntaxNode * SyntaxNode
-    | Error
+    | Error of Diagnostic
 
 /// Binary Node Constructor. Converts the head::tail list from a binary parser
 /// into a `SyntaxNode` by recursively applying `cons`. This has the property of
@@ -29,18 +26,12 @@ let rec private binNode cons (car, cdr) =
     | [single] -> cons(car, single)
     | head::tail -> binNode cons (cons(car, head), tail)
 
-/// Our Parser State. Used to keep track of the diagnostics we encountered while
-/// parsing the source text so far.
-type State =
-    { mutable Diagnostics: Diagnostic list }
-
-    /// Emit Diagnostic
-    member s.EmitDiagnostic pos err =
-        let diag = Diagnostic(pos, err)
-        s.Diagnostics <- diag::s.Diagnostics
-
-    /// Initial parser state
-    static member Initial = { Diagnostics = [] }
+let rec getDiagnostics = function
+    | Value _ -> []
+    | Product (left, right)
+    | Sum (left, right) ->
+        getDiagnostics left @ getDiagnostics right
+    | Error diag -> [diag]
 
 // ~~~~~~~~~~~~~ Error Handling Constructs ~~~~~~~~~~~~~~~~~~
 //
@@ -49,27 +40,27 @@ type State =
 
 /// Expect a given parser to match in the current location. If the parser fails
 /// the given `err` is emitted as a diagnostic at the current location.
-let expect (p: Parser<'a, State>) err =
-    let raiseErr (stream: CharStream<State>) =
-        stream.UserState.EmitDiagnostic stream.Position err
-        Reply(None)
-    attempt p |>> Some <|> raiseErr
+let expect (p: Parser<'a, _>) err =
+    let raiseErr (stream: CharStream<_>) =
+        let diag = Diagnostic(stream.Position, err)
+        Reply(Result.Error diag)
+    attempt p |>> Result.Ok <|> raiseErr
 
-/// A variant of `expect` that resolves parser failures with the `Error` syntax
+/// A variant of `expet` that resolves parser failures with the `Error` syntax
 /// node rather than returning an `option`al value.
-let expectSyn (p: Parser<SyntaxNode, State>) err =
-    expect p err |>> Option.defaultValue Error
+let expectSyn (p: Parser<SyntaxNode, _>) err =
+    expect p err |>> Result.defaultWith (fun diag -> Error diag)
 
 /// Error syncrhonisation. used to parse any characters and emit them as
 /// diagnostics. This is `<|>`ed into the standard combinator chain right at the
 /// root to try and ensure the parser _always_ has a way to succeed.
-let error (stream: CharStream<State>) =
+let error (stream: CharStream<_>) =
     match stream.ReadCharOrNewline() with
     | EOS -> Reply(ReplyStatus.Error, expected "valid expression character")
     | ch ->
-        sprintf "Unexpected character %c" ch
-        |> stream.UserState.EmitDiagnostic stream.Position
-        Reply(Error)
+        let err = sprintf "Unexpected character %c" ch
+        let diag = Diagnostic(stream.Position, err)
+        Reply(Error diag)
 
 // ~~~~~~~~~~~~~ The Parser ~~~~~~~~~~~~~~~~~~
 
@@ -94,9 +85,9 @@ let parser = many (expr <|> error) .>> eof
 /// fails. We expect the parser should _always_ succeed. For malformed source
 /// text an `SyntaxNode.Error` should be returned and a `Diagnostic` emitted.
 let private parseExpr input =
-    match runParserOnString parser State.Initial "test" input with
+    match runParserOnString parser () "test" input with
     | ParserResult.Failure(_) as f -> failwithf "Parser failed! %A" f
-    | ParserResult.Success(r, s, _) -> (r, s.Diagnostics)
+    | ParserResult.Success(r, _, _) -> (r, List.map getDiagnostics r)
 
 let private test input =
     parseExpr input
